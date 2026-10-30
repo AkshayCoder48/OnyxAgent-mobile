@@ -41,6 +41,15 @@ type Row =
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/**
+ * Stable empty-thread reference. Store selectors must return referentially
+ * equal snapshots between renders — zustand v5 wires them into
+ * useSyncExternalStore, and a fresh `[]` literal on every call makes React
+ * force-re-render in an infinite loop ("Maximum update depth exceeded" →
+ * FATAL on launch, reproduced in the CI emulator smoke test).
+ */
+const EMPTY_MESSAGES: Message[] = [];
+
 function dayKey(ts: number): string {
   const d = new Date(ts);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -75,7 +84,9 @@ export default function ChatScreen({ drawer, onOpenModelPicker }: ChatScreenProp
 
   const activeConversationId = useOnyxStore((s) => s.activeConversationId);
   const messages = useOnyxStore((s) =>
-    s.activeConversationId ? s.messagesByConversation[s.activeConversationId] ?? [] : [],
+    s.activeConversationId
+      ? s.messagesByConversation[s.activeConversationId] ?? EMPTY_MESSAGES
+      : EMPTY_MESSAGES,
   );
   const streaming = useOnyxStore((s) => s.streaming);
   const apiKeyMissing = useOnyxStore((s) => s.settings.apiKey.trim().length === 0);
