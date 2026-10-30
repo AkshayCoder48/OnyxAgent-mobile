@@ -1,5 +1,57 @@
 # Worklog
 
+## Task 10 — Fix the release APK's instant crash on launch (reproduced in CI)
+
+**Date:** 2026-10-30 · **Repo:** `OnyxAgent-mobile` (this repo)
+
+### Request
+
+The CI-built APK (release `build-2`/`build-3`) crashed instantly on launch on
+a real device.
+
+### What was done
+
+- **Reproduced it without a device**: extended the workflow into a
+  build → **emulator smoke test** → release pipeline. The smoke test boots a
+  headless Android 15 (API 35, x86_64) emulator on the runner (KVM), installs
+  the fresh APK, launches it, watches the process for 45s, and captures
+  logcat / crash block / window focus / screenshot as artifacts. The GitHub
+  Release is now published **only if the app survives** the smoke test.
+- Hardened the smoke test along the way (each failure taught something):
+  - adb calls wrapped in `timeout` (a hung `adb logcat -d` held the job until
+    the 40-min timeout cancelled it, and cancelled-run logs are not kept);
+  - fail-fast boot loop (emulator-process liveness + emulator.log tail in the
+    job log instead of waiting out the whole timeout);
+  - forced `ANDROID_AVD_HOME`/`ANDROID_USER_HOME` (avdmanager created the AVD
+    where the emulator never looked — "Unknown AVD name [onyx]");
+  - fixed a self-matching crash grep (the "no FATAL EXCEPTION" fallback text
+    contained the search string) and `set -o pipefail` on the sdkmanager
+    install whose exit code `tail` was masking.
+- **Root cause** (from the captured logcat — run 6):
+  `FATAL EXCEPTION: mqt_v_native — JavascriptException: Maximum update depth
+  exceeded ... at ChatScreen`, with zustand's `forceStoreRerender` /
+  `updateStoreInstance` frames. `ChatScreen`'s messages selector returned a
+  fresh `[]` literal whenever `activeConversationId` was null — i.e. on every
+  fresh install — so `useSyncExternalStore` saw a new snapshot on every
+  render and React force-re-rendered in an infinite loop until the app died.
+  (Typecheck and bundling can't catch this; it needed a runtime.)
+  - Fix: module-level `EMPTY_MESSAGES` constant so the empty-thread snapshot
+    is referentially stable. Audited every other selector — all return raw
+    state refs or primitives.
+- **Bonus bug caught by the smoke-test screenshot**: the closed bottom sheet
+  peeked above the bottom edge on tall screens (closed-state translateY was a
+  fixed 640 — shorter than the panel's max 78% of a ~915dp window). Parked
+  the closed sheet a full window-height down instead.
+
+### Verified
+
+- Run 7 (crash fix): build ✓, smoke test ✓ (empty crash block, app focused),
+  release `build-7` published.
+- Run 8 (sheet-peek fix): all green again; the captured screenshot was
+  vision-checked — full UI rendered (header, welcome, chips, 4 prompt cards,
+  composer), **no sheet peek**, no error dialogs.
+- Every push now ships an emulator-verified APK.
+
 ## Task 9 — CI: build Android APK on every push, publish to GitHub Releases
 
 **Date:** 2026-10-30 · **Repo:** `OnyxAgent-mobile` (this repo)
