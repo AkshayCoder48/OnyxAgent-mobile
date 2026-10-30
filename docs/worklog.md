@@ -1,5 +1,56 @@
 # Worklog
 
+## Task 9 — CI: build Android APK on every push, publish to GitHub Releases
+
+**Date:** 2026-10-30 · **Repo:** `OnyxAgent-mobile` (this repo)
+
+### Request
+
+Add a GitHub Actions workflow to this repo that builds an Android APK on every
+push and attaches it to GitHub Releases.
+
+### What was done
+
+- Added `.github/workflows/android-apk.yml` ("Android APK Release"):
+  - **Triggers:** every push to any branch + manual `workflow_dispatch`.
+  - **Toolchain:** JDK 17 (temurin), Node 20, Bun (matches local `bun.lock`),
+    `CI=true` so Expo CLI never blocks on interactive prompts.
+  - **Build:** `bun install --frozen-lockfile` → `bunx expo prebuild -p android
+    --no-install` (regenerates the gitignored `android/` native project) →
+    `./gradlew assembleRelease --no-daemon` (Hermes, release variant).
+  - **Artifact:** APK copied to
+    `OnyxAgent-v<run_number>-<short-sha>.apk`, also uploaded as a workflow
+    artifact (30-day retention) for intermediate builds.
+  - **Release:** per-push tag `build-<run_number>`; a re-run first deletes the
+    stale release/tag, then `gh release create` publishes the APK with install
+    notes. Release is created by the `github-actions` bot using the built-in
+    `GITHUB_TOKEN`, so no secrets setup is needed.
+  - **Guardrails:** `permissions: contents: write` (minimum scope for
+    releases), `concurrency` cancels superseded runs on the same ref,
+    60-minute job timeout.
+- Verified against a locally generated prebuild that the runner toolchain
+  covers everything the build needs: compileSdk/targetSdk 35 (preinstalled on
+  `ubuntu-latest`), Gradle 8.13 wrapper, NDK 27.1.12297006, Kotlin 2.0.21.
+- Confirmed release APK signs with the auto-generated debug keystore
+  (standard Expo template) — fine for a sideload APK, noted in the release
+  body.
+
+### Verified
+
+- YAML parses cleanly (triggers / permissions / 12 steps enumerated).
+- Local `expo prebuild -p android --no-install` succeeds — CI's generation
+  step is exactly the same command.
+- Gradle itself can't run in this sandbox (no Android SDK locally); the
+  workflow run on GitHub is the authoritative check — verified live after
+  push (run started, completed green, APK attached to the release).
+
+### Notes
+
+- The APK is signed with the debug keystore, so every build installs over the
+  previous one (same signature). If a Play-Store-style upgrade path is ever
+  needed, add a proper keystore via repo secrets and extend the signing
+  config in `android/app/build.gradle` (after checking it into the repo).
+
 ## Task 8 — Publish the React Native app as its own repo; restore the web repo
 
 **Date:** 2026-10-30 · **Repo:** `OnyxAgent-mobile` (this repo, new)
