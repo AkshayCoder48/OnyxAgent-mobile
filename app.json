@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "OnyxAgent",
+    "slug": "onyxagent-mobile",
+    "version": "1.0.0",
+    "scheme": "onyxagent",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.onyxagent.native"
+    },
+    "android": {
+      "package": "ai.onyxagent.native",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-font"
+    ]
+  }
+}
