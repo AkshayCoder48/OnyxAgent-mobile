@@ -1,7 +1,7 @@
 name: Android APK Release
 
-# Build a release APK on every push and publish it to GitHub Releases.
-# Manual runs are also supported via workflow_dispatch.
+# Build a release APK on every push, smoke-test it on an emulator,
+# then publish it to GitHub Releases (only if the smoke test passes).
 
 on:
   push:
@@ -17,10 +17,11 @@ permissions:
 
 env:
   CI: true
+  PKG: ai.onyxagent.app
 
 jobs:
   build-android:
-    name: Build & Release APK
+    name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -68,8 +69,133 @@ jobs:
         with:
           name: OnyxAgent-APK
           path: artifacts/*.apk
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: error
+
+  smoke-test:
+    name: Emulator smoke test
+    needs: build-android
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: OnyxAgent-APK
+          path: apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Setup Java (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install emulator & system image (API 35)
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install \
+            "system-images;android-35;google_apis;x86_64" \
+            "platforms;android-35" "platform-tools" "emulator" > /dev/null
+
+      - name: Create AVD
+        run: |
+          echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --force --name onyx \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device pixel_7
+
+      - name: Boot emulator (headless)
+        run: |
+          nohup "$ANDROID_HOME/emulator/emulator" -avd onyx \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect > emulator.log 2>&1 &
+          timeout 540 "$ANDROID_HOME/platform-tools/adb" wait-for-device shell \
+            'while [[ -z "$(getprop sys.boot_completed)" ]]; do sleep 2; done'
+          "$ANDROID_HOME/platform-tools/adb" devices
+
+      - name: Install & launch APK
+        run: |
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          $ADB install -r apk/*.apk
+          $ADB logcat -c
+          $ADB shell am start -W -n "$PKG/$PKG.MainActivity"
+
+      - name: Watch for crashes (45s)
+        run: |
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          ALIVE=yes
+          for i in $(seq 1 9); do
+            sleep 5
+            if $ADB shell pidof "$PKG" > /dev/null 2>&1; then
+              echo "t=$((i*5))s: process alive"
+            else
+              echo "t=$((i*5))s: PROCESS DEAD"
+              ALIVE=no
+              break
+            fi
+          done
+          echo "ALIVE=$ALIVE" >> "$GITHUB_ENV"
+
+      - name: Capture diagnostics
+        if: always()
+        run: |
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          $ADB logcat -d -v time > logcat.txt || true
+          $ADB shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" > focus.txt || true
+          $ADB exec-out screencap -p > screen.png || true
+          grep -A 80 "FATAL EXCEPTION" logcat.txt > crash.txt || echo "no FATAL EXCEPTION in logcat" > crash.txt
+          echo "--- crash.txt ---"
+          head -100 crash.txt || true
+          echo "--- focus ---"
+          cat focus.txt || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-diagnostics
+          path: |
+            logcat.txt
+            crash.txt
+            focus.txt
+            screen.png
+            emulator.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Fail if crashed
+        if: always()
+        run: |
+          if grep -q "FATAL EXCEPTION" crash.txt 2>/dev/null; then
+            echo "::error::App crashed with a FATAL EXCEPTION — see smoke-test-diagnostics artifact"
+            exit 1
+          fi
+          if [ "${ALIVE:-no}" != "yes" ]; then
+            echo "::error::App process died during the watch window — see smoke-test-diagnostics artifact"
+            exit 1
+          fi
+          echo "App survived the smoke test."
+
+  release:
+    name: Publish to GitHub Releases
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: OnyxAgent-APK
+          path: apk
 
       - name: Create tag name
         id: tag
@@ -87,11 +213,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.tag.outputs.tag }}" \
-            artifacts/*.apk \
+            apk/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
             --title "OnyxAgent Android APK (build #${{ github.run_number }})" \
             --notes "Automated APK build from commit ${{ github.sha }}.
 
           **Install:** Download the \`.apk\` file below, then open it on your Android device and allow installation from unknown sources.
 
-          Built with Expo prebuild + Gradle assembleRelease. Signed with the default debug keystore." \
+          Built with Expo prebuild + Gradle assembleRelease, and verified by an automated Android 15 emulator smoke test. Signed with the default debug keystore." \
             --target "$GITHUB_SHA"
