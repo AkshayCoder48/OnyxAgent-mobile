@@ -41,8 +41,16 @@ push and attaches it to GitHub Releases.
 - Local `expo prebuild -p android --no-install` succeeds — CI's generation
   step is exactly the same command.
 - Gradle itself can't run in this sandbox (no Android SDK locally); the
-  workflow run on GitHub is the authoritative check — verified live after
-  push (run started, completed green, APK attached to the release).
+  workflow run on GitHub is the authoritative check:
+  - Run #1 failed: `Namespace 'ai.onyxagent.native' is not a valid Java
+    package name as 'native' is a Java keyword` — a latent bug in `app.json`
+    that only bites on Android compile.
+  - Fixed by renaming the package/bundle id to `ai.onyxagent.app`
+    (commit `3c8aa5b`; nothing was published under the old id).
+  - Run #2 completed **green end-to-end** and published release
+    [`build-2`](https://github.com/AkshayCoder48/OnyxAgent-mobile/releases/tag/build-2)
+    with `OnyxAgent-v2-3c8aa5b.apk` (69.7 MB) attached — the full loop
+    (push → prebuild → assembleRelease → release) is verified working.
 
 ### Notes
 
