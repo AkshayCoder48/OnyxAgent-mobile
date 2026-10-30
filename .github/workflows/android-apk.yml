@@ -77,6 +77,12 @@ jobs:
     needs: build-android
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # Canonical AVD location — both avdmanager and the emulator resolve
+      # this dir, avoiding the classic GH Actions AVD-home mismatch
+      # ("Unknown AVD name ... no file onyx.ini in $HOME/.android/avd").
+      ANDROID_AVD_HOME: /home/runner/.android/avd
+      ANDROID_USER_HOME: /home/runner/.android
 
     steps:
       - name: Download APK
@@ -104,6 +110,7 @@ jobs:
 
       - name: Install emulator & system image (API 35)
         run: |
+          set -o pipefail
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install \
@@ -112,10 +119,16 @@ jobs:
 
       - name: Create AVD
         run: |
+          mkdir -p "$ANDROID_AVD_HOME"
           echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
             --force --name onyx \
             --package "system-images;android-35;google_apis;x86_64" \
             --device pixel_7
+          echo "--- avdmanager list avd ---"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" list avd || true
+          echo "--- $ANDROID_AVD_HOME ---"
+          ls -la "$ANDROID_AVD_HOME" || true
+          test -f "$ANDROID_AVD_HOME/onyx.ini"
 
       - name: Boot emulator (headless, fail-fast)
         run: |
@@ -178,7 +191,8 @@ jobs:
           timeout 60 "$ADB" logcat -d -v time > logcat.txt 2>/dev/null || echo "logcat unavailable" > logcat.txt
           timeout 20 "$ADB" shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" > focus.txt || echo "focus unavailable" > focus.txt
           timeout 30 "$ADB" exec-out screencap -p > screen.png 2>/dev/null || echo "screenshot unavailable" > screen.png
-          grep -A 80 "FATAL EXCEPTION" logcat.txt > crash.txt || echo "no FATAL EXCEPTION in logcat" > crash.txt
+          # crash.txt holds ONLY the crash block — empty when there is none.
+          grep -A 80 "FATAL EXCEPTION" logcat.txt > crash.txt || true
           echo "--- crash.txt ---"
           head -100 crash.txt || true
           echo "--- focus ---"
@@ -204,7 +218,7 @@ jobs:
       - name: Fail if crashed
         if: always()
         run: |
-          if grep -q "FATAL EXCEPTION" crash.txt 2>/dev/null; then
+          if [ -s crash.txt ]; then
             echo "::error::App crashed with a FATAL EXCEPTION — see smoke-test-diagnostics artifact"
             exit 1
           fi
