@@ -5,6 +5,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { MotiView } from 'moti';
@@ -39,6 +40,11 @@ export function Sheet({
 }: SheetProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  // The panel is anchored to the bottom and never taller than
+  // maxHeightFraction of the window, so a full-window-height translateY is
+  // always enough to park it fully off-screen when closed. (A fixed 640 was
+  // shorter than the panel on tall devices, leaving a closed-sheet peek.)
+  const { height: windowHeight } = useWindowDimensions();
 
   const backdrop = useMemo(
     () => (
@@ -68,8 +74,8 @@ export function Sheet({
         pointerEvents="box-none"
       >
         <MotiView
-          from={{ translateY: 640 }}
-          animate={{ translateY: open ? 0 : 640 }}
+          from={{ translateY: windowHeight }}
+          animate={{ translateY: open ? 0 : windowHeight }}
           transition={{ type: 'spring', damping: 30, stiffness: 320 }}
           style={[
             styles.panel,
